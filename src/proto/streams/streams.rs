@@ -166,18 +166,14 @@ where
                     }
                 }
 
-                match me.actions.recv.open(id, Open::Headers, &mut me.counts)? {
-                    Some(stream_id) => {
-                        let stream = Stream::new(
-                            stream_id,
-                            me.actions.send.init_window_sz(),
-                            me.actions.recv.init_window_sz(),
-                        );
+                let stream_id = me.actions.recv.open(id, Open::Headers, &mut me.counts)?;
+                let stream = Stream::new(
+                    stream_id,
+                    me.actions.send.init_window_sz(),
+                    me.actions.recv.init_window_sz(),
+                );
 
-                        e.insert(stream)
-                    }
-                    None => return Ok(()),
-                }
+                e.insert(stream)
             }
         };
 
@@ -488,25 +484,24 @@ where
             }
         };
 
-        // TODO: Streams in the reserved states do not count towards the concurrency
-        // limit. However, it seems like there should be a cap otherwise this
-        // could grow in memory indefinitely.
+        // "A client that accepts server push SHOULD limit the number of streams it allows to
+        //  be in the "reserved (remote)" state. An excessive number of server push streams can
+        //  be treated as a stream error (Section 5.4.2) of type ENHANCE_YOUR_CALM."
+        // [https://httpwg.org/specs/rfc7540.html#dos]
+        if !me.counts.can_inc_num_reserved_streams() {
+            return Err(RecvError::Stream {
+                id,
+                reason: Reason::ENHANCE_YOUR_CALM,
+            });
+        }
 
         // Ensure that we can reserve streams
         me.actions.recv.ensure_can_reserve()?;
 
         // Next, open the stream.
-        //
-        // If `None` is returned, then the stream is being refused. There is no
-        // further work to be done.
-        if me
-            .actions
+        me.actions
             .recv
-            .open(promised_id, Open::PushPromise, &mut me.counts)?
-            .is_none()
-        {
-            return Ok(());
-        }
+            .open(promised_id, Open::PushPromise, &mut me.counts)?;
 
         // Try to handle the frame and create a corresponding key for the pushed stream
         // this requires a bit of indirection to make the borrow checker happy.
@@ -572,19 +567,6 @@ where
                 send_buffer: self.send_buffer.clone(),
             }
         })
-    }
-
-    pub fn send_pending_refusal<T>(
-        &mut self,
-        cx: &mut Context,
-        dst: &mut Codec<T, Prioritized<B>>,
-    ) -> Poll<io::Result<()>>
-    where
-        T: AsyncWrite + Unpin,
-    {
-        let mut me = self.inner.lock().unwrap();
-        let me = &mut *me;
-        me.actions.recv.send_pending_refusal(cx, dst)
     }
 
     pub fn clear_expired_reset_streams(&mut self) {

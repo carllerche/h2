@@ -51,9 +51,6 @@ pub(super) struct Recv {
     /// Holds frames that are waiting to be read
     buffer: Buffer<Event>,
 
-    /// Refused StreamId, this represents a frame that must be sent out.
-    refused: Option<StreamId>,
-
     /// If push promises are allowed to be recevied.
     is_push_enabled: bool,
 }
@@ -107,7 +104,6 @@ impl Recv {
             pending_reset_expired: store::Queue::new(),
             reset_duration: config.local_reset_duration,
             buffer: Buffer::new(),
-            refused: None,
             is_push_enabled: config.local_push_enabled,
         }
     }
@@ -124,15 +120,13 @@ impl Recv {
 
     /// Update state reflecting a new, remotely opened stream
     ///
-    /// Returns the stream state if successful. `None` if refused
+    /// Returns the stream state if successful.
     pub fn open(
         &mut self,
         id: StreamId,
         mode: Open,
         counts: &mut Counts,
-    ) -> Result<Option<StreamId>, RecvError> {
-        assert!(self.refused.is_none());
-
+    ) -> Result<StreamId, RecvError> {
         counts.peer().ensure_can_open(id, mode)?;
 
         let next_id = self.next_stream_id()?;
@@ -143,12 +137,7 @@ impl Recv {
 
         self.next_stream_id = id.next_id();
 
-        if !counts.can_inc_num_recv_streams() {
-            self.refused = Some(id);
-            return Ok(None);
-        }
-
-        Ok(Some(id))
+        Ok(id)
     }
 
     /// Transition the stream state based on receiving headers
@@ -170,7 +159,21 @@ impl Recv {
             }
 
             // Increment the number of concurrent streams
-            counts.inc_num_recv_streams(stream);
+            //
+            // "An endpoint that receives a HEADERS frame that causes its advertised concurrent
+            //  stream limit to be exceeded MUST treat this as a stream error (Section 5.4.2)
+            //  of type PROTOCOL_ERROR or REFUSED_STREAM. The choice of error code determines
+            //  whether the endpoint wishes to enable automatic retry (see Section 8.1.4) for
+            //  details)."
+            // [https://httpwg.org/specs/rfc7540.html#n-stream-concurrency]
+            //
+            // TODO: Permit users to configure whether automatic retry is enabled.
+            counts
+                .inc_num_recv_streams(stream)
+                .or(Err(RecvError::Stream {
+                    id: stream.id,
+                    reason: Reason::REFUSED_STREAM,
+                }))?;
         }
 
         if !stream.content_length.is_head() {
@@ -836,31 +839,6 @@ impl Recv {
             counts.inc_num_reset_streams();
             self.pending_reset_expired.push(stream);
         }
-    }
-
-    /// Send any pending refusals.
-    pub fn send_pending_refusal<T, B>(
-        &mut self,
-        cx: &mut Context,
-        dst: &mut Codec<T, Prioritized<B>>,
-    ) -> Poll<io::Result<()>>
-    where
-        T: AsyncWrite + Unpin,
-        B: Buf,
-    {
-        if let Some(stream_id) = self.refused {
-            ready!(dst.poll_ready(cx))?;
-
-            // Create the RST_STREAM frame
-            let frame = frame::Reset::new(stream_id, Reason::REFUSED_STREAM);
-
-            // Buffer the frame
-            dst.buffer(frame.into()).expect("invalid RST_STREAM frame");
-        }
-
-        self.refused = None;
-
-        Poll::Ready(Ok(()))
     }
 
     pub fn clear_expired_reset_streams(&mut self, store: &mut Store, counts: &mut Counts) {

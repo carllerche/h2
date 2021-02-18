@@ -57,6 +57,7 @@ pub(crate) struct Config {
     pub initial_max_send_streams: usize,
     pub reset_stream_duration: Duration,
     pub reset_stream_max: usize,
+    pub remote_reserved_stream_max: usize,
     pub settings: frame::Settings,
 }
 
@@ -89,6 +90,7 @@ where
             local_push_enabled: config.settings.is_push_enabled().unwrap_or(true),
             local_reset_duration: config.reset_stream_duration,
             local_reset_max: config.reset_stream_max,
+            remote_reserved_max: config.remote_reserved_stream_max,
             remote_init_window_sz: DEFAULT_INITIAL_WINDOW_SIZE,
             remote_max_initiated: config
                 .settings
@@ -140,7 +142,6 @@ where
         ready!(self
             .settings
             .poll_send(cx, &mut self.codec, &mut self.streams))?;
-        ready!(self.streams.send_pending_refusal(cx, &mut self.codec))?;
 
         Poll::Ready(Ok(()))
     }

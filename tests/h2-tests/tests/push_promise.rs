@@ -453,3 +453,123 @@ async fn recv_push_promise_dup_stream_id() {
 
     join(mock, h2).await;
 }
+
+#[tokio::test]
+async fn promised_stream_is_reset_if_max_streams_is_exceeded() {
+    h2_support::trace_init!();
+
+    let (io, mut srv) = mock::new();
+    let mock = async move {
+        srv.assert_client_handshake().await;
+        srv.recv_frame(
+            frames::headers(1)
+                .request("GET", "https://http2.akamai.com/")
+                .eos(),
+        )
+        .await;
+        srv.send_frame(
+            frames::push_promise(1, 2).request("GET", "https://http2.akamai.com/style.css"),
+        )
+        .await;
+        srv.send_frame(frames::headers(2).response(404)).await;
+        srv.send_frame(
+            frames::push_promise(1, 4).request("GET", "https://http2.akamai.com/script.js"),
+        )
+        .await;
+        srv.send_frame(
+            frames::push_promise(1, 6).request("GET", "https://http2.akamai.com/image.png"),
+        )
+        .await;
+        srv.ping_pong([1; 8]).await;
+        srv.send_frame(frames::headers(4).response(404)).await;
+        srv.recv_frame(frames::reset(4).refused()).await;
+        srv.send_frame(frames::data(2, "").eos()).await;
+        srv.send_frame(frames::headers(6).response(404).eos()).await;
+        srv.send_frame(frames::headers(1).response(404).eos()).await;
+    };
+
+    let h2 = async move {
+        let (mut client, mut h2) = client::Builder::new()
+            .max_concurrent_streams(1)
+            .handshake::<_, Bytes>(io)
+            .await
+            .unwrap();
+        let request = Request::builder()
+            .method(Method::GET)
+            .uri("https://http2.akamai.com/")
+            .body(())
+            .unwrap();
+        let (mut resp, _) = client.send_request(request, true).unwrap();
+        let push_promises = resp.push_promises();
+        let check_pushed_response = async move {
+            let mut push_promises = push_promises
+                .map(Result::unwrap)
+                .map(h2::client::PushPromise::into_parts);
+
+            while let Some((req, resp)) = push_promises.next().await {
+                match req.uri().path() {
+                    "/style.css" | "/image.png" => {
+                        resp.await.unwrap().into_body().data().await;
+                    }
+                    "/script.js" => assert_eq!(
+                        resp.await.unwrap_err().reason(),
+                        Some(Reason::REFUSED_STREAM)
+                    ),
+                    _ => unreachable!(),
+                }
+            }
+        };
+        h2.drive(check_pushed_response).await;
+    };
+
+    join(mock, h2).await;
+}
+
+#[tokio::test]
+async fn too_many_promises_is_enhance_your_calm_error() {
+    h2_support::trace_init!();
+
+    let (io, mut srv) = mock::new();
+    let mock = async move {
+        srv.assert_client_handshake().await;
+        srv.recv_frame(
+            frames::headers(1)
+                .request("GET", "https://http2.akamai.com/")
+                .eos(),
+        )
+        .await;
+        srv.send_frame(
+            frames::push_promise(1, 2).request("GET", "https://http2.akamai.com/style.css"),
+        )
+        .await;
+        srv.send_frame(
+            frames::push_promise(1, 4).request("GET", "https://http2.akamai.com/script.js"),
+        )
+        .await;
+        srv.ping_pong([1; 8]).await;
+        srv.send_frame(
+            frames::push_promise(1, 6).request("GET", "https://http2.akamai.com/image.png"),
+        )
+        .await;
+        srv.recv_frame(frames::reset(1).reason(Reason::ENHANCE_YOUR_CALM))
+            .await;
+        srv.send_frame(frames::headers(1).response(404).eos()).await;
+    };
+
+    let h2 = async move {
+        let (mut client, mut h2) = client::Builder::new()
+            .max_remote_reserved_streams(2)
+            .handshake::<_, Bytes>(io)
+            .await
+            .unwrap();
+        let request = Request::builder()
+            .method(Method::GET)
+            .uri("https://http2.akamai.com/")
+            .body(())
+            .unwrap();
+        let (resp, _) = client.send_request(request, true).unwrap();
+        let _ = h2.drive(resp).await;
+    };
+
+    join(mock, h2).await;
+}

@@ -322,6 +322,9 @@ pub struct Builder {
     /// Maximum number of locally reset streams to keep at a time.
     reset_stream_max: usize,
 
+    /// Maximum number of remote reserved streams to keep at a time.
+    remote_reserved_stream_max: usize,
+
     /// Initial `Settings` frame to send as part of the handshake.
     settings: Settings,
 
@@ -616,6 +619,7 @@ impl Builder {
         Builder {
             reset_stream_duration: Duration::from_secs(proto::DEFAULT_RESET_STREAM_SECS),
             reset_stream_max: proto::DEFAULT_RESET_STREAM_MAX,
+            remote_reserved_stream_max: proto::DEFAULT_RESERVED_STREAM_MAX,
             initial_target_connection_window_size: None,
             initial_max_send_streams: usize::MAX,
             settings: Default::default(),
@@ -902,6 +906,47 @@ impl Builder {
         self
     }
 
+    /// Sets the maximum number of concurrent remotely reserved streams.
+    ///
+    /// When [Server Push] is enabled, servers are limited to opening at most
+    /// [`MAX_CONCURRENT_STREAMS`] concurrent streams on the connection.
+    /// However, this does not constrain the number of pushes that they
+    /// may concurrently *promise* are to follow—each of which causes the client
+    /// to place the relevant stream into the `reserved (remote)` state.
+    ///
+    /// In order to prevent resource drain (leading to denial of service)
+    /// from too many concurrent promises holding streams in `reserved (remote)`
+    /// state, the client will signal an [`ENHANCE_YOUR_CALM`] stream error on
+    /// the explicit request stream (upon which the `PUSH_PROMISE` frames are
+    /// being received) once this limit is reached.
+    ///
+    /// The default value is 10.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use tokio::io::{AsyncRead, AsyncWrite};
+    /// # use h2::client::*;
+    /// # use bytes::Bytes;
+    /// #
+    /// # async fn doc<T: AsyncRead + AsyncWrite + Unpin>(my_io: T)
+    /// # -> Result<((SendRequest<Bytes>, Connection<T, Bytes>)), h2::Error>
+    /// # {
+    /// // `client_fut` is a future representing the completion of the HTTP/2.0
+    /// // handshake.
+    /// let client_fut = Builder::new()
+    ///     .max_remote_reserved_streams(100)
+    ///     .handshake(my_io);
+    /// # client_fut.await
+    /// # }
+    /// #
+    /// # pub fn main() {}
+    /// ```
+    pub fn max_remote_reserved_streams(&mut self, max: usize) -> &mut Self {
+        self.remote_reserved_stream_max = max;
+        self
+    }
+
     /// Sets the duration to remember locally reset streams.
     ///
     /// When a stream is explicitly reset, the HTTP/2.0 specification requires
@@ -1163,6 +1208,7 @@ where
                 initial_max_send_streams: builder.initial_max_send_streams,
                 reset_stream_duration: builder.reset_stream_duration,
                 reset_stream_max: builder.reset_stream_max,
+                remote_reserved_stream_max: builder.remote_reserved_stream_max,
                 settings: builder.settings.clone(),
             },
         );

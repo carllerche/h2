@@ -25,6 +25,12 @@ pub(super) struct Counts {
 
     /// Current number of pending locally reset streams
     num_reset_streams: usize,
+
+    /// Maximum number of remote reserved streams
+    max_reserved_streams: usize,
+
+    /// Current number of reserved streams
+    num_reserved_streams: usize,
 }
 
 impl Counts {
@@ -38,6 +44,8 @@ impl Counts {
             num_recv_streams: 0,
             max_reset_streams: config.local_reset_max,
             num_reset_streams: 0,
+            max_reserved_streams: config.remote_reserved_max,
+            num_reserved_streams: 0,
         }
     }
 
@@ -59,14 +67,19 @@ impl Counts {
     ///
     /// # Panics
     ///
-    /// Panics on failure as this should have been validated before hand.
-    pub fn inc_num_recv_streams(&mut self, stream: &mut store::Ptr) {
-        assert!(self.can_inc_num_recv_streams());
+    /// Panics if stream is already included in the count.
+    pub fn inc_num_recv_streams(&mut self, stream: &mut store::Ptr) -> Result<(), ()> {
         assert!(!stream.is_counted);
+
+        if !self.can_inc_num_recv_streams() {
+            return Err(());
+        }
 
         // Increment the number of remote initiated streams
         self.num_recv_streams += 1;
         stream.is_counted = true;
+
+        Ok(())
     }
 
     /// Returns true if the send stream concurrency can be incremented
@@ -104,6 +117,22 @@ impl Counts {
         self.num_reset_streams += 1;
     }
 
+    /// Returns true if the number of reserved streams can be incremented.
+    pub fn can_inc_num_reserved_streams(&self) -> bool {
+        self.max_reserved_streams > self.num_reserved_streams
+    }
+
+    /// Increments the number of reserved streams.
+    ///
+    /// # Panics
+    ///
+    /// Panics on failure as this should have been validated before hand.
+    pub fn inc_num_reserved_streams(&mut self) {
+        assert!(self.can_inc_num_reserved_streams());
+
+        self.num_reserved_streams += 1;
+    }
+
     pub fn apply_remote_settings(&mut self, settings: &frame::Settings) {
         if let Some(val) = settings.max_concurrent_streams() {
             self.max_send_streams = val as usize;
@@ -122,9 +151,19 @@ impl Counts {
     {
         // TODO: Does this need to be computed before performing the action?
         let is_pending_reset = stream.is_pending_reset_expiration();
+        let was_reserved = stream.state.is_reserved_remote();
 
         // Run the action
         let ret = f(self, &mut stream);
+
+        // If the reserved state has changed, adjust counter accordingly
+        if stream.state.is_reserved_remote() != was_reserved {
+            if was_reserved {
+                self.dec_num_reserved_streams();
+            } else {
+                self.inc_num_reserved_streams();
+            }
+        }
 
         self.transition_after(stream, is_pending_reset);
 
@@ -190,6 +229,11 @@ impl Counts {
     fn dec_num_reset_streams(&mut self) {
         assert!(self.num_reset_streams > 0);
         self.num_reset_streams -= 1;
+    }
+
+    fn dec_num_reserved_streams(&mut self) {
+        assert!(self.num_reserved_streams > 0);
+        self.num_reserved_streams -= 1;
     }
 }
 

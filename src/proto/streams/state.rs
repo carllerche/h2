@@ -443,6 +443,13 @@ impl State {
             _ => Ok(None),
         }
     }
+
+    pub fn is_reserved_remote(&self) -> bool {
+        match self.inner {
+            ReservedRemote => true,
+            _ => false,
+        }
+    }
 }
 
 impl Default for State {
