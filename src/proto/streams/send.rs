@@ -336,10 +336,10 @@ impl Send {
         let available = stream.send_flow.available().as_size();
         let buffered = stream.buffered_send_data;
 
-        if available <= buffered {
+        if available as usize <= buffered {
             0
         } else {
-            available - buffered
+            available - buffered as WindowSize
         }
     }
 

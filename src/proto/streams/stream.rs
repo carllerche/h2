@@ -45,7 +45,7 @@ pub(super) struct Stream {
 
     /// Amount of data buffered at the prioritization layer.
     /// TODO: Technically this could be greater than the window size...
-    pub buffered_send_data: WindowSize,
+    pub buffered_send_data: usize,
 
     /// Task tracking additional send capacity (i.e. window updates).
     send_task: Option<Waker>,

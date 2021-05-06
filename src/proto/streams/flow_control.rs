@@ -173,7 +173,7 @@ impl FlowControl {
         );
 
         // Ensure that the argument is correct
-        assert!(sz <= self.window_size);
+        assert!(self.window_size >= sz as usize);
 
         // Update values
         self.window_size -= sz;
@@ -206,38 +206,22 @@ impl Window {
     }
 }
 
-impl PartialEq<WindowSize> for Window {
-    fn eq(&self, other: &WindowSize) -> bool {
+impl PartialEq<usize> for Window {
+    fn eq(&self, other: &usize) -> bool {
         if self.0 < 0 {
             false
         } else {
-            (self.0 as WindowSize).eq(other)
+            (self.0 as usize).eq(other)
         }
     }
 }
 
-impl PartialEq<Window> for WindowSize {
-    fn eq(&self, other: &Window) -> bool {
-        other.eq(self)
-    }
-}
-
-impl PartialOrd<WindowSize> for Window {
-    fn partial_cmp(&self, other: &WindowSize) -> Option<::std::cmp::Ordering> {
+impl PartialOrd<usize> for Window {
+    fn partial_cmp(&self, other: &usize) -> Option<::std::cmp::Ordering> {
         if self.0 < 0 {
             Some(::std::cmp::Ordering::Less)
         } else {
-            (self.0 as WindowSize).partial_cmp(other)
-        }
-    }
-}
-
-impl PartialOrd<Window> for WindowSize {
-    fn partial_cmp(&self, other: &Window) -> Option<::std::cmp::Ordering> {
-        if other.0 < 0 {
-            Some(::std::cmp::Ordering::Greater)
-        } else {
-            self.partial_cmp(&(other.0 as WindowSize))
+            (self.0 as usize).partial_cmp(other)
         }
     }
 }
