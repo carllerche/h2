@@ -132,4 +132,11 @@ impl fmt::Display for Error {
     }
 }
 
-impl error::Error for Error {}
+impl error::Error for Error {
+    fn source(&self) -> Option<&(dyn error::Error + 'static)> {
+        match self.kind {
+            Kind::Io(ref e) => Some(e),
+            _ => None,
+        }
+    }
+}

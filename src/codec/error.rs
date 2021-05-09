@@ -1,6 +1,6 @@
 use crate::frame::{Reason, StreamId};
 
-use std::{error, fmt, io};
+use std::{fmt, io};
 
 /// Errors that are received
 #[derive(Debug)]
@@ -76,8 +76,6 @@ impl From<io::Error> for RecvError {
     }
 }
 
-impl error::Error for RecvError {}
-
 impl fmt::Display for RecvError {
     fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
         use self::RecvError::*;
@@ -91,8 +89,6 @@ impl fmt::Display for RecvError {
 }
 
 // ===== impl SendError =====
-
-impl error::Error for SendError {}
 
 impl fmt::Display for SendError {
     fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
@@ -119,8 +115,6 @@ impl From<UserError> for SendError {
 }
 
 // ===== impl UserError =====
-
-impl error::Error for UserError {}
 
 impl fmt::Display for UserError {
     fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
