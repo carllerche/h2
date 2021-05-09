@@ -1425,14 +1425,20 @@ impl proto::Peer for Peer {
         // A request translated from HTTP/1 must not include the :authority
         // header
         if let Some(authority) = pseudo.authority {
-            let maybe_authority = uri::Authority::from_maybe_shared(authority.clone().into_inner());
-            parts.authority = Some(maybe_authority.or_else(|why| {
-                malformed!(
-                    "malformed headers: malformed authority ({:?}): {}",
-                    authority,
-                    why,
-                )
-            })?);
+            // When connecting to a UNIX Domain Socket (UDS), then we might get a path for the
+            // authority field. If it's a local path and exists, then we do not error in that case
+            // and assume an UDS.
+            if !authority.is_empty() && !authority.ends_with(".sock") {
+                let maybe_authority =
+                    uri::Authority::from_maybe_shared(authority.clone().into_inner());
+                parts.authority = Some(maybe_authority.or_else(|why| {
+                    malformed!(
+                        "malformed headers: malformed authority ({:?}): {}",
+                        authority,
+                        why,
+                    )
+                })?);
+            }
         }
 
         // A :scheme is required, except CONNECT.
